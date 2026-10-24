@@ -13,14 +13,12 @@ user_files/
 # WorkBuddy 工作区
 .workbuddy/
 
-# AnkiWeb 发布脚本产生的临时产物
-# .ankiweb_profile/ 内含 AnkiWeb 登录 cookie，切勿提交
+# AnkiWeb 发布过程产生的临时产物（截图快照 / 打包记录 / 上次结果）
 .ankiweb_*
-ankiweb_upload.py
-ankiweb_manage.py
-ankiweb_fix.py
-ankiweb_update.py
-ankiweb_verify.py
+
+# 发布工具的工作目录与浏览器登录态（内含 cookie，切勿提交）
+/.ankiweb/
+/.ankiweb_profile/
 
 # 系统文件
 .DS_Store
