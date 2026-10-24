@@ -100,24 +100,161 @@ JS_SCRAPE_REPLY = """
 """
 
 # 点击发送按钮（仅在用户明确开启 auto_send 时使用；不推荐开启）
+#
+# 分四层兜底，任何一层成功就返回 "ok:<命中方式>"，全失败返回 "not-found:<尝试过的元素数>"：
+#   1) 用户在预设里配置的选择器
+#   2) 严格选择器：submit / data-testid / aria-label —— 只认语义明确的，误点风险最低
+#   3) 宽松选择器：class 或 id 里含 send / submit，且尺寸不超过 SEND_MAX_W/H（避免点到整块容器）
+#   4) 就近查找：从输入框往上找祖先容器，在容器里挑一个"看起来像发送键"的小按钮
+#   5) 键盘兜底：对输入框派发 Enter，React / Vue 系站点普遍能接住
+#
+# 注意：旧的写法一旦某个选择器查得到元素就不再往后试，哪怕这些元素全都
+# hidden / disabled —— 结果就是明明有按钮却报 not-found。这里改成逐层试到能点为止。
 JS_CLICK_SEND = """
 (function(sel){
-  try {
-    var list = [];
-    if (sel) { try { list = Array.prototype.slice.call(document.querySelectorAll(sel)); } catch(e) {} }
-    if (!list.length) {
-      var sels = ["button[type='submit']", "button[aria-label*='发送']", "button[aria-label*='Send']",
-                  "div[role='button'][aria-label*='发送']"];
-      for (var i = 0; i < sels.length && !list.length; i++) {
-        try { list = Array.prototype.slice.call(document.querySelectorAll(sels[i])); } catch(e) {}
+  // 宽松层只给高度设上限（按钮再宽也不会很高）。
+  // 早期版本连宽度一起限（160/200），结果块级 div 撑满整行被误杀，只能回退到 Enter。
+  var SEND_MAX_H = 120;
+  var tried = 0;
+  function visible(el){
+    try {
+      var r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) { return false; }
+      var cs = getComputedStyle(el);
+      if (!cs || cs.display === "none" || cs.visibility === "hidden") { return false; }
+      if (parseFloat(cs.opacity || "1") < 0.1) { return false; }
+      return true;
+    } catch (e) { return false; }
+  }
+  function usable(el){
+    if (!el || el.disabled) { return false; }
+    try {
+      // 非表单元素（div[role=button]）的 disabled 只是个属性，读 .disabled 拿不到
+      if (el.hasAttribute && el.hasAttribute("disabled")) { return false; }
+      if (el.getAttribute("aria-disabled") === "true") { return false; }
+      if (el.getAttribute("data-disabled") === "true") { return false; }
+      // 灰掉的按钮一般会被加上 disabled 类或干脆屏蔽点击
+      var cls = (el.getAttribute("class") || "").toLowerCase();
+      if (cls.indexOf("disabled") >= 0) { return false; }
+      var pe = getComputedStyle(el).pointerEvents;
+      if (pe === "none") { return false; }
+    } catch (e) {}
+    return visible(el);
+  }
+  function q(s){
+    try { return Array.prototype.slice.call(document.querySelectorAll(s)); } catch (e) { return []; }
+  }
+  function clickFirst(list, how, sizeLimit){
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      tried++;
+      if (!usable(el)) { continue; }
+      if (sizeLimit) {
+        try {
+          var r = el.getBoundingClientRect();
+          if (r.width > SEND_MAX_W || r.height > SEND_MAX_H) { continue; }
+        } catch (e) { continue; }
       }
+      try { el.click(); } catch (e) { continue; }
+      return "ok:" + how + "#" + i;
     }
-    for (var j = 0; j < list.length; j++) {
-      var el = list[j], r = el.getBoundingClientRect();
-      if (r.width > 10 && r.height > 10 && !el.disabled) { el.click(); return "ok"; }
+    return "";
+  }
+  // 汇总多个选择器的命中元素，去重后按面积从小到大点第一个可点的。
+  // 高度设上限（按钮不会很高）；宽度不设限——块级元素会撑满整行，限宽只会误杀。
+  function clickSmallest(sels, how, editable){
+    var pool = [];
+    for (var i = 0; i < sels.length; i++) { pool = pool.concat(q(sels[i])); }
+    var uniq = [];
+    for (var j = 0; j < pool.length; j++) { if (uniq.indexOf(pool[j]) < 0) { uniq.push(pool[j]); } }
+    var boxed = [];
+    for (var k = 0; k < uniq.length; k++) {
+      // 发送键不可能"包着输入框"，把这类外层容器排除掉
+      if (editable && (uniq[k] === editable || (uniq[k].contains && uniq[k].contains(editable)))) {
+        continue;
+      }
+      var rr = null;
+      try { rr = uniq[k].getBoundingClientRect(); } catch (e) { continue; }
+      if (!rr || rr.height > SEND_MAX_H) { continue; }
+      boxed.push({el: uniq[k], area: rr.width * rr.height});
     }
-    return "not-found";
-  } catch (e) { return "error"; }
+    boxed.sort(function(x, y) { return x.area - y.area; });
+    var list = [];
+    for (var m = 0; m < boxed.length; m++) { list.push(boxed[m].el); }
+    return clickFirst(list, how, 0);
+  }
+
+  function findEditable(){
+    var ae = document.activeElement;
+    if (ae && (ae.tagName === "TEXTAREA" || ae.tagName === "INPUT" || ae.isContentEditable) && visible(ae)) {
+      return ae;
+    }
+    var cands = q("textarea, [contenteditable='true'], input[type='text']");
+    for (var i = cands.length - 1; i >= 0; i--) { if (visible(cands[i])) { return cands[i]; } }
+    return null;
+  }
+
+  var tier1 = [];
+  if (sel) { tier1.push(sel); }
+  tier1 = tier1.concat([
+    "button[type='submit']",
+    "[data-testid='send-button']", "[data-testid*='send']",
+    "button[aria-label*='发送']", "button[aria-label*='Send']",
+    "button[aria-label*='send' i]",
+    "[role='button'][aria-label*='发送']", "[role='button'][aria-label*='Send']",
+    "[role='button'][aria-label*='send' i]"
+  ]);
+  for (var a = 0; a < tier1.length; a++) {
+    var r1 = clickFirst(q(tier1[a]), "sel[" + tier1[a] + "]", 0);
+    if (r1) { return r1; }
+  }
+
+  // DeepSeek / 豆包 这类站点用 div[role=button] + 自研 class，既没有 aria-label 也不是 submit。
+  // 这里不按选择器顺序取第一个，而是把命中元素汇总后按面积取最小的那个：
+  // 真正的发送键永远比"同样带 send 字样的外层容器"小。
+  var tier2 = [
+    "[role='button'][class*='send' i]", "button[class*='send' i]",
+    "[role='button'][class*='submit' i]", "button[class*='submit' i]",
+    "[class*='sendBtn' i]", "[class*='send-btn' i]", "[class*='send-button' i]",
+    "[id*='send' i] button", "[id*='send' i][role='button']", "[id*='submit' i] button"
+  ];
+  var ed = findEditable();
+  var r2 = clickSmallest(tier2, "cls", ed);
+  if (r2) { return r2; }
+
+  if (ed) {
+    var node = ed, depth = 0;
+    while (node && depth < 6) {
+      var kids = [];
+      try {
+        kids = Array.prototype.slice.call(
+          node.querySelectorAll("button, [role='button'], [class*='send' i], [class*='submit' i]"));
+      } catch (e) { kids = []; }
+      // 按面积从小到大排：发送键通常是一行里最小的那个可点元素
+      var small = [];
+      for (var k = 0; k < kids.length; k++) {
+        // 排除输入框本身、输入框内部的节点，以及包着输入框的外层容器
+        if (kids[k] === ed || (ed.contains && ed.contains(kids[k]))
+            || (kids[k].contains && kids[k].contains(ed))) { continue; }
+        var rr = null;
+        try { rr = kids[k].getBoundingClientRect(); } catch (e) { continue; }
+        if (!rr || rr.height > SEND_MAX_H) { continue; }
+        small.push({el: kids[k], area: rr.width * rr.height});
+      }
+      small.sort(function(x, y) { return x.area - y.area; });
+      var r3 = clickFirst(small.map(function(x) { return x.el; }), "near#" + depth, 0);
+      if (r3) { return r3; }
+      node = node.parentElement; depth++;
+    }
+    try {
+      var ev = {key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true};
+      ed.dispatchEvent(new KeyboardEvent("keydown", ev));
+      ed.dispatchEvent(new KeyboardEvent("keypress", ev));
+      ed.dispatchEvent(new KeyboardEvent("keyup", ev));
+      return "ok:enter";
+    } catch (e) {}
+  }
+  return "not-found:" + tried;
 })(%s);
 """
 

@@ -369,10 +369,28 @@ class WebPanel(QWidget):
             return
         if self.page is None:
             return
+        preset = self.cfg.active_preset() or {}
+        selector = preset.get("send_selector", "")
         try:
-            self.page.runJavaScript(self.backend.send_script(""))
+            self.page.runJavaScript(self.backend.send_script(selector), self._on_send_result)
         except Exception:
             tooltip("未找到发送按钮，请手动点击")
+
+    def _on_send_result(self, result):
+        """把网页里点发送的结果反馈出来，失败时说清楚到哪一步没命中。"""
+        result = (result or "").strip()
+        if result.startswith("ok:"):
+            how = result[3:]
+            if how == "enter":
+                tooltip("已发送（用 Enter 兜底触发）")
+            else:
+                tooltip("已点击网页的发送按钮")
+            return
+        if result.startswith("not-found"):
+            tooltip("没找到可点的发送按钮（已试 %s 个元素），请手动点击；"
+                    "可在预设里填 send_selector 指定" % result.split(":")[-1])
+            return
+        tooltip("点击发送按钮失败，请手动点击")
 
     def sizeHint(self):
         return QSize(360, 420)

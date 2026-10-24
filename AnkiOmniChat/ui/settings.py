@@ -121,10 +121,11 @@ class SettingsDialog(QDialog):
         ua_row.addWidget(self.edit_ua, 1)
         layout.addLayout(ua_row)
 
-        layout.addWidget(QLabel("网页入口预设（名称 / 地址 / 输入框选择器 / 回复选择器）：", w))
+        layout.addWidget(QLabel("网页入口预设（名称 / 地址 / 输入框选择器 / 回复选择器 / 发送按钮选择器）：", w))
 
-        self.table = QTableWidget(0, 4, w)
-        self.table.setHorizontalHeaderLabels(["名称", "地址", "输入框选择器", "回复选择器"])
+        self.table = QTableWidget(0, 5, w)
+        self.table.setHorizontalHeaderLabels(
+            ["名称", "地址", "输入框选择器", "回复选择器", "发送按钮选择器"])
         self.table.horizontalHeader().setSectionResizeMode(HEADER_STRETCH)
         self.table.verticalHeader().setVisible(False)
         for p in self.cfg.web_presets():
@@ -137,7 +138,8 @@ class SettingsDialog(QDialog):
         btn_reset = QPushButton("恢复内置预设", w)
         btn_add.clicked.connect(lambda: self._add_row({"id": "custom", "name": "自定义",
                                                        "url": "", "input_selector": "",
-                                                       "reply_selector": ""}))
+                                                       "reply_selector": "",
+                                                       "send_selector": ""}))
         btn_del.clicked.connect(self._del_row)
         btn_reset.clicked.connect(self._reset_presets)
         row.addWidget(btn_add)
@@ -160,6 +162,7 @@ class SettingsDialog(QDialog):
         self.table.setItem(r, 1, QTableWidgetItem(preset.get("url", "")))
         self.table.setItem(r, 2, QTableWidgetItem(preset.get("input_selector", "")))
         self.table.setItem(r, 3, QTableWidgetItem(preset.get("reply_selector", "")))
+        self.table.setItem(r, 4, QTableWidgetItem(preset.get("send_selector", "")))
 
     def _del_row(self):
         row = self.table.currentRow()
@@ -336,6 +339,7 @@ class SettingsDialog(QDialog):
             url = (self.table.item(r, 1).text() if self.table.item(r, 1) else "").strip()
             inp = (self.table.item(r, 2).text() if self.table.item(r, 2) else "").strip()
             rep = (self.table.item(r, 3).text() if self.table.item(r, 3) else "").strip()
+            snd = (self.table.item(r, 4).text() if self.table.item(r, 4) else "").strip()
             if not name and not url:
                 continue
             # 尽量沿用原有 id（doubao/kimi/deepseek…），避免保存设置后 active_preset 错位
@@ -348,6 +352,7 @@ class SettingsDialog(QDialog):
                 "url": url,
                 "input_selector": inp,
                 "reply_selector": rep,
+                "send_selector": snd,
                 "user_agent": "",
             })
         if presets:

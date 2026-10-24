@@ -26,16 +26,36 @@ DEFAULT_UA = (
 )
 
 
-def _preset(pid, name, url, input_sel="", reply_sel=""):
-    """构造一个网页模式预设（免费模式：用户在 WebView 内自行登录）。"""
+def _preset(pid, name, url, input_sel="", reply_sel="", send_sel=""):
+    """构造一个网页模式预设（免费模式：用户在 WebView 内自行登录）。
+
+    send_selector 可选：留空时由 JS_CLICK_SEND 的多层兜底自动找发送按钮，
+    站点改版导致自动找不到时，用户可以在这里手动指定。
+    """
     return {
         "id": pid,
         "name": name,
         "url": url,
         "input_selector": input_sel,
         "reply_selector": reply_sel,
+        "send_selector": send_sel,
         "user_agent": "",
     }
+
+
+def normalize_presets(presets):
+    """给旧配置里的预设补齐新增字段（presets 是 list，_merge 不会递归进去）。"""
+    out = []
+    for p in (presets or []):
+        if not isinstance(p, dict):
+            continue
+        item = dict(p)
+        item.setdefault("input_selector", "")
+        item.setdefault("reply_selector", "")
+        item.setdefault("send_selector", "")
+        item.setdefault("user_agent", "")
+        out.append(item)
+    return out
 
 
 # 内置三个免费网页入口（仅提供入口，不代付、不抓 cookie、不走付费 API）
@@ -182,6 +202,8 @@ class Config(object):
         # 预设为空时补回内置预设，避免用户误删后无可用入口
         if not self._data.get("web", {}).get("presets"):
             self._data["web"]["presets"] = copy.deepcopy(DEFAULT_WEB_PRESETS)
+        # 旧配置升级：presets 是 list，_merge 覆盖不进去，这里单独补齐新字段
+        self._data["web"]["presets"] = normalize_presets(self._data["web"]["presets"])
         return self
 
     def save(self):
