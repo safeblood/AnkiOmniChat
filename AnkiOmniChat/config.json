@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "general": {
+    "backend_mode": "web",
+    "auto_switch_session": true,
+    "auto_inject_on_show_answer": true,
+    "always_attach_card_context": true,
+    "auto_show_panel_in_review": true,
+    "history_limit": 20,
+    "max_messages_per_session": 200,
+    "panel_width": 400,
+    "dock_area": "right"
+  },
+  "inject": {
+    "template": "{name}：{value}",
+    "field_separator": "\n",
+    "exclude_fields": "",
+    "prefix": "下面是我在 Anki 中正在复习的一张卡片，请基于它回答我的问题。\n\n",
+    "suffix": "\n\n（以上为卡片内容，我的问题是：）\n",
+    "strip_html": true
+  },
+  "web": {
+    "presets": [
+      {
+        "id": "doubao",
+        "name": "豆包",
+        "url": "https://www.doubao.com/chat/",
+        "input_selector": "textarea, div[contenteditable='true']",
+        "reply_selector": "",
+        "user_agent": ""
+      },
+      {
+        "id": "kimi",
+        "name": "Kimi",
+        "url": "https://www.kimi.com/",
+        "input_selector": "div[contenteditable='true'], textarea",
+        "reply_selector": "",
+        "user_agent": ""
+      },
+      {
+        "id": "deepseek",
+        "name": "DeepSeek",
+        "url": "https://chat.deepseek.com/",
+        "input_selector": "textarea, div[contenteditable='true']",
+        "reply_selector": "",
+        "user_agent": ""
+      }
+    ],
+    "active_preset": "doubao",
+    "auto_paste_on_inject": false,
+    "auto_send": false,
+    "custom_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "scrape_reply": true,
+    "last_url": ""
+  },
+  "api": {
+    "endpoint": "https://api.deepseek.com/v1/chat/completions",
+    "api_key": "",
+    "model": "deepseek-chat",
+    "temperature": 0.3,
+    "max_tokens": 2048,
+    "system_prompt": "你是嵌入在 Anki 中的学习助手。回答请简洁、结构化，必要时使用 Markdown 与 LaTeX 公式（行内 $...$，行间 $$...$$）。",
+    "stream": true,
+    "timeout": 120
+  },
+  "shortcuts": {
+    "toggle_panel": "Ctrl+Alt+C",
+    "inject_card": "Ctrl+Alt+I",
+    "focus_input": "Ctrl+Alt+U",
+    "send": "Ctrl+Return"
+  },
+  "storage": {
+    "location": "profile"
+  }
+}

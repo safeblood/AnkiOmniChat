@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 插件运行时生成的用户数据（会话历史 / 网页 profile / 生成的 chat.html）
+user_files/
+**/user_files/
+
+# 打包产物（发布走 GitHub Release，不入库）
+*.ankiaddon
+
+# WorkBuddy 工作区
+.workbuddy/
+
+# 系统文件
+.DS_Store
+Thumbs.db
