@@ -23,7 +23,7 @@ from aqt.utils import tooltip
 
 from ..backend import ApiBackend
 from ..qt_compat import (
-    CTRL_MOD, KEY_ENTER, KEY_RETURN, SHIFT_MOD, TEXT_SELECTABLE,
+    CTRL_MOD, KEY_ENTER, KEY_RETURN, PLAIN_TEXT, SHIFT_MOD, TEXT_SELECTABLE,
     TEXTCURSOR_END, VERTICAL,
 )
 from ..session_manager import FREE_KEY
@@ -96,6 +96,9 @@ class ChatPanel(QWidget):
         self.session_label = QLabel("自由会话", self)
         self.session_label.setToolTip("当前会话（以 Note ID 为 key，切换卡片自动切换）")
         self.session_label.setTextInteractionFlags(TEXT_SELECTABLE)
+        # 强制纯文本：卡片名可能含 < > &（HTML 残留或数学式），不能让 QLabel 当富文本解析
+        if PLAIN_TEXT is not None:
+            self.session_label.setTextFormat(PLAIN_TEXT)
         self.btn_settings = QPushButton("设置", self)
         self.btn_clear = QPushButton("清空", self)
         self.btn_collapse = QPushButton("折叠", self)
@@ -243,8 +246,17 @@ class ChatPanel(QWidget):
         if self.current_key == FREE_KEY:
             return "自由会话（未绑定卡片）"
         if t:
-            return "卡片：%s" % t[:28]
+            # 兜底再折叠一次空白（历史会话的标题可能是旧数据，仍带换行）
+            t = " ".join(t.split())
+            return "卡片：%s" % self._elide(t, 28)
         return "卡片：%s" % self.current_key.replace("note:", "")
+
+    @staticmethod
+    def _elide(text, limit):
+        """截断并补省略号，避免标题撑破标题栏。"""
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "…"
 
     def clear_session(self):
         self.sessions.clear(self.current_key)

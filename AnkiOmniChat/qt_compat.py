@@ -54,6 +54,9 @@ VERTICAL = _pick(lambda: Qt.Vertical, lambda: Qt.Orientation.Vertical)
 TEXT_SELECTABLE = _pick(lambda: Qt.TextSelectableByMouse,
                         lambda: Qt.TextInteractionFlag.TextSelectableByMouse)
 
+# QLabel.setTextFormat 用：强制纯文本，防止卡片名里的 < > & 被当成 HTML 解析
+PLAIN_TEXT = _pick(lambda: Qt.PlainText, lambda: Qt.TextFormat.PlainText)
+
 APP_SHORTCUT = _pick(lambda: Qt.ApplicationShortcut,
                      lambda: Qt.ShortcutContext.ApplicationShortcut)
 WIDGET_CHILDREN_SHORTCUT = _pick(lambda: Qt.WidgetWithChildrenShortcut,

@@ -138,6 +138,9 @@ class OmniChatApp(QObject):
                 from .ui.actions import strip_html_keep_text
                 text = strip_html_keep_text(value).strip()
                 if text:
+                    # 折叠所有空白（含换行）：字段常以代码围栏等多行内容开头，
+                    # 不折叠的话标题里的换行会把面板标题栏撑成多行
+                    text = " ".join(text.split())
                     return text[:40]
         except Exception:
             pass
