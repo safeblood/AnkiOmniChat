@@ -227,9 +227,24 @@ AnkiOmniChat/
 
 ## 7. 版本
 
-`1.1.0` — 目标 Anki 2.1.60 ~ 2.1.66（Qt5/PyQt5），并通过 `qt_compat.py` 兼容
+`1.1.3` — 目标 Anki 2.1.60 ~ 2.1.66（Qt5/PyQt5），并通过 `qt_compat.py` 兼容
 Anki 23.10+ / 25.x / 26.x 的 Qt6 环境（已在本机 Anki 26.9.3 + PyQt6 + Python 3.13 上完成
 导入与枚举适配验证）。
+
+### 1.1.3 相比 1.1.2
+- **网页模式『发送』按钮找不到**：DeepSeek / 豆包 这类站点用 `div[role=button]` + 自研 class，
+  既没有 aria-label 也不是 submit，旧选择器全部落空。现在改成多层兜底：
+  配置选择器 → 严格语义选择器 → class/id 含 send/submit（按面积取最小，避免点到整块容器）
+  → 输入框就近查找 → Enter 兜底。
+- 顺带修掉一个老逻辑 bug：只要某个选择器查得到元素就不再往后试，哪怕这些元素全都
+  hidden / disabled，结果明明有按钮却报「未找到」。
+- 非表单元素（`div[role=button]`）的 `disabled` 属性、`aria-disabled`、含 `disabled` 的类名、
+  `pointer-events:none` 现在都能识别为不可点。
+- 预设新增 `send_selector`（设置表格加一列），站点改版时可在设置里手动指定；旧配置自动补齐。
+- 点击发送后会把结果反馈出来（成功 / 走了 Enter / 试了多少个元素没命中），不再静默失败。
+
+### 1.1.2 相比 1.1.1
+- 在设置里开启『粘贴后自动点击网页的发送按钮』后，面板『发送』按钮**立即**可用，不必重启 Anki。
 
 ### 1.1.0 相比 1.0.0
 - 新增 `qt_compat.py`：统一解析 Qt5 / Qt6 枚举差异（`Qt.RightDockWidgetArea` ↔
