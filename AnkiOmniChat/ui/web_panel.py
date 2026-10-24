@@ -283,6 +283,20 @@ class WebPanel(QWidget):
             return
         self.load_url(url, preset=preset)
 
+    def refresh_flags(self):
+        """把网页模式的开关状态重新同步到面板控件。
+
+        修复：btn_send 的 enabled 原先只在构造时读一次 web.auto_send，
+        导致在设置里开启『粘贴后自动点击网页的发送按钮』后必须重启 Anki 才生效。
+        现在设置保存时会调用本方法，即时生效。
+        """
+        auto_send = bool(self.cfg.get("web.auto_send", False))
+        self.btn_send.setEnabled(auto_send)
+        self.btn_send.setToolTip(
+            "点击网页上的发送按钮（已开启，自行承担风险）" if auto_send
+            else "点击网页上的发送按钮（默认关闭；到『设置 → 网页模式』开启后可用）"
+        )
+
     # ------------------------------------------------------------------ 交互
     def set_pending_text(self, text):
         """缓存待粘贴文本：翻卡自动注入（仅复制剪贴板）时也要存下来，

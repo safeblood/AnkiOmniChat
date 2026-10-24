@@ -332,10 +332,11 @@ class OmniChatApp(QObject):
         open_settings_dialog(self.cfg, self.sessions, on_saved=self.apply_config, parent=mw)
 
     def apply_config(self):
-        """设置保存后重新应用（快捷键、预设、面板宽度、模式）。"""
+        """设置保存后重新应用（快捷键、预设、面板宽度、模式、网页开关）。"""
         try:
             self._build_shortcuts()
             self.panel.refresh_presets()
+            self.panel.apply_web_flags()
             self.panel.set_mode(self.cfg.get("general.backend_mode", "web"))
             if self._dock is not None and self._dock_owner is not None:
                 try:

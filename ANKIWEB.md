@@ -1,3 +1,5 @@
+<p><img src="https://cdn.jsdelivr.net/gh/safeblood/AnkiOmniChat@master/docs/demo.gif" alt="AnkiOmniChat demo" width="480"></p>
+
 In-Anki AI chat side panel, inspired by Obsidian OmniChat.
 
 - Dockable/collapsible side panel in both the Reviewer and Browse windows

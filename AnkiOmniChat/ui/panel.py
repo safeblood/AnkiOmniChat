@@ -217,6 +217,13 @@ class ChatPanel(QWidget):
         # 设置里改动过预设后，把网址同步过去
         self.web_page.apply_active_preset()
 
+    def apply_web_flags(self):
+        """设置保存后把网页模式的开关同步到控件（如『发送』按钮的可用状态）。"""
+        try:
+            self.web_page.refresh_flags()
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------ 会话
     def switch_session(self, key, title=""):
         """切换会话（不同卡片 = 不同 key，历史互相隔离）。"""
