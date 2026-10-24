@@ -4,6 +4,7 @@
 以「单张卡片（Note）」为文档上下文，Note ID 作为会话 key，不同卡片的聊天历史相互隔离。
 
 - 兼容版本：Anki **2.1.60 ~ 2.1.66**，并已在 **Anki 25.x / 26.x（PyQt6 / Python 3.13）** 上做适配验证
+- **AnkiWeb：[ankiweb.net/shared/info/1939948095](https://ankiweb.net/shared/info/1939948095)**（Add-on ID `1939948095`）
 - 技术约束：只用官方 Qt WebEngine、`anki` / `aqt` hooks 与 Anki 自带库；**零第三方 pip 依赖**
 - 双后端：**模式 A（默认）WebView 内嵌免费网页** / **模式 B OpenAI 兼容 API（流式）**
 - Qt 适配：PyQt5 与 PyQt6 的枚举差异（作用域/非作用域）统一由 `qt_compat.py` 处理
@@ -27,7 +28,14 @@
 
 ## 2. 安装步骤
 
-### 方式一：文件夹安装（推荐，便于改代码）
+### 方式一：AnkiWeb 安装（最省事）
+
+1. Anki → 工具 → 插件 → 「获取插件…」
+2. 粘贴 Add-on ID：**`1939948095`**，回车，重启 Anki。
+
+也可直接打开 <https://ankiweb.net/shared/info/1939948095> 查看页面与下载。
+
+### 方式二：文件夹安装（推荐，便于改代码）
 
 1. 关闭 Anki。
 2. 找到插件目录：
@@ -52,7 +60,7 @@
 4. 启动 Anki。首次加载会自动在 `addons21/AnkiOmniChat/` 下生成默认配置；主窗口右侧出现
    「AnkiOmniChat」面板（也可在 工具 → AnkiOmniChat：显示/隐藏侧边栏 打开）。
 
-### 方式二：GitHub 仓库安装
+### 方式三：GitHub 仓库安装
 
 ```bash
 git clone https://github.com/safeblood/AnkiOmniChat.git
@@ -61,7 +69,7 @@ cp -r AnkiOmniChat/AnkiOmniChat <addons21 目录>/
 
 或直接从 Releases 页下载打好包的 `AnkiOmniChat.ankiaddon`。
 
-### 方式三：打包安装
+### 方式四：打包安装
 
 1. 把 `AnkiOmniChat` 文件夹压缩为 zip（注意：**zip 根目录内直接是文件，不要再套一层文件夹**）。
 2. 重命名为 `AnkiOmniChat.ankiaddon`。
