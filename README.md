@@ -230,3 +230,22 @@ Anki 23.10+ / 25.x / 26.x 的 Qt6 环境（已在本机 Anki 26.9.3 + PyQt6 + Py
 - 菜单挂载兼容新版 Anki：`mw.form.menuTools` 不存在时退回在菜单栏建 "AnkiOmniChat" 菜单。
 - 夜间模式判断同时支持 `mw.pm.night_mode()` 与 `aqt.theme.theme_manager.night_mode`。
 - QtWebEngine 缺失时优雅降级（提示改用 API 模式），不再导致插件加载失败。
+
+---
+
+## 8. 维护与发布
+
+打包 / 发布到 AnkiWeb 已封装为 **ankiweb-publish** skill（`skills/ankiweb-publish/`，
+已同步安装到本机所有 agent 的 skills 目录）。发布参数集中在项目根的 `publish.json`，
+插件页描述正文在 `ANKIWEB.md`。
+
+```bash
+python skills/ankiweb-publish/scripts/ankiweb.py status    # 看当前配置
+python skills/ankiweb-publish/scripts/ankiweb.py pack      # 打出 .ankiaddon
+python skills/ankiweb-publish/scripts/ankiweb.py login     # 首次登录，之后长期复用
+python skills/ankiweb-publish/scripts/ankiweb.py update    # 推新版到 AnkiWeb
+python skills/ankiweb-publish/scripts/ankiweb.py verify    # 校验线上状态
+```
+
+发新版的最小步骤：改 `meta.json` 的版本号 → `pack` → `update`。
+AnkiWeb 上的 Add-on ID 是 `1939948095`，版本支持范围 2.1.60 – 26.09.0。
