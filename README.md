@@ -1,5 +1,7 @@
 # AnkiOmniChat
 
+<p align="center"><img src="docs/logo.png" width="320" alt="AnkiOmniChat"></p>
+
 在 Anki 内复刻 Obsidian OmniChat 的侧边 AI 对话体验：右侧常驻可停靠/可折叠的聊天面板，
 以「单张卡片（Note）」为文档上下文，Note ID 作为会话 key，不同卡片的聊天历史相互隔离。
 

@@ -1,3 +1,5 @@
+![AnkiOmniChat](https://cdn.jsdelivr.net/gh/safeblood/AnkiOmniChat@master/docs/logo.png)
+
 ![AnkiOmniChat demo: review a card, the panel auto-loads it, one click asks the AI](https://cdn.jsdelivr.net/gh/safeblood/AnkiOmniChat@master/docs/demo.gif)
 
 **[Demo GIF (full size)](https://cdn.jsdelivr.net/gh/safeblood/AnkiOmniChat@master/docs/demo.gif)** — flip to the answer, the side panel auto-switches to that card's session and injects every field, then one click asks the AI.
