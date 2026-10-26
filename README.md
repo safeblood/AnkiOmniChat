@@ -264,20 +264,6 @@ Anki 23.10+ / 25.x / 26.x 的 Qt6 环境（已在本机 Anki 26.9.3 + PyQt6 + Py
 
 ---
 
-## 8. 维护与发布
-
-打包 / 发布到 AnkiWeb 用的是 **ankiweb-publish** skill —— 它放在独立的私有仓库
-<https://github.com/safeblood/ankiweb-publish>，本仓库不再包含它。本机安装位置
-`~/.workbuddy/skills/ankiweb-publish`。发布参数集中在项目根的 `publish.json`，
-插件页描述正文在 `ANKIWEB.md`。
-
-```bash
-python ~/.workbuddy/skills/ankiweb-publish/scripts/ankiweb.py status    # 看当前配置
-python ~/.workbuddy/skills/ankiweb-publish/scripts/ankiweb.py pack      # 打出 .ankiaddon
-python ~/.workbuddy/skills/ankiweb-publish/scripts/ankiweb.py login     # 首次登录，之后长期复用
-python ~/.workbuddy/skills/ankiweb-publish/scripts/ankiweb.py update    # 推新版到 AnkiWeb
-python ~/.workbuddy/skills/ankiweb-publish/scripts/ankiweb.py verify    # 校验线上状态
-```
 
 发新版的最小步骤：改 `meta.json` 的版本号 → `pack` → `update`。
 AnkiWeb 上的 Add-on ID 是 `1939948095`，版本支持范围 2.1.60 – 26.09.0。
