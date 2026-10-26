@@ -19,6 +19,9 @@
 
 复习中翻到答案面 → 侧边栏自动切到这张卡的会话并把卡片全部字段注入 → 一键写入网页输入框提问。
 
+📺 **介绍视频**（2 分钟，中文）：[在 Anki 里装一个 AI 侧边栏：AnkiOmniChat 插件介绍](https://www.bilibili.com/video/BV1pznZ6sEN6)
+（由 [f(t)](https://github.com/safeblood/ft) 工作流制作，动画源码随制作仓库开源。）
+
 ---
 
 ## 1. 功能一览
