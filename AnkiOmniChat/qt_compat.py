@@ -18,8 +18,8 @@ Anki 2.1.60 ~ 2.1.65 用 PyQt5，2.1.66 及更新版本（含 23.10 / 24.x / 25.
 """
 
 from aqt.qt import (
-    QDialogButtonBox, QDockWidget, QEvent, QHeaderView, QLineEdit, QMessageBox,
-    Qt, QTextCursor,
+    QAbstractItemView, QDialogButtonBox, QDockWidget, QEvent, QHeaderView, QLineEdit,
+    QMessageBox, Qt, QTextCursor,
 )
 
 
@@ -54,6 +54,10 @@ VERTICAL = _pick(lambda: Qt.Vertical, lambda: Qt.Orientation.Vertical)
 TEXT_SELECTABLE = _pick(lambda: Qt.TextSelectableByMouse,
                         lambda: Qt.TextInteractionFlag.TextSelectableByMouse)
 
+# QComboBox/QTableWidget 的按项 tooltip：Qt6 里同样搬进了 ItemDataRole
+USER_ROLE = _pick(lambda: Qt.UserRole, lambda: Qt.ItemDataRole.UserRole)
+TOOLTIP_ROLE = _pick(lambda: Qt.ToolTipRole, lambda: Qt.ItemDataRole.ToolTipRole)
+
 # QLabel.setTextFormat 用：强制纯文本，防止卡片名里的 < > & 被当成 HTML 解析
 PLAIN_TEXT = _pick(lambda: Qt.PlainText, lambda: Qt.TextFormat.PlainText)
 
@@ -78,11 +82,21 @@ LINEEDIT_PASSWORD = _pick(lambda: QLineEdit.Password,
 HEADER_STRETCH = _pick(lambda: QHeaderView.Stretch,
                        lambda: QHeaderView.ResizeMode.Stretch)
 
+# QTableWidget / QTableView 的选择与编辑行为
+SELECT_ROWS = _pick(lambda: QAbstractItemView.SelectRows,
+                    lambda: QAbstractItemView.SelectionBehavior.SelectRows)
+SINGLE_SELECTION = _pick(lambda: QAbstractItemView.SingleSelection,
+                         lambda: QAbstractItemView.SelectionMode.SingleSelection)
+NO_EDIT_TRIGGERS = _pick(lambda: QAbstractItemView.NoEditTriggers,
+                         lambda: QAbstractItemView.EditTrigger.NoEditTriggers)
+
 TEXTCURSOR_END = _pick(lambda: QTextCursor.End,
                        lambda: QTextCursor.MoveOperation.End)
 
 MSGBOX_YES = _pick(lambda: QMessageBox.Yes,
                    lambda: QMessageBox.StandardButton.Yes)
+MSGBOX_NO = _pick(lambda: QMessageBox.No,
+                  lambda: QMessageBox.StandardButton.No)
 
 EVENT_CLOSE = _pick(lambda: QEvent.Close, lambda: QEvent.Type.Close)
 
@@ -175,4 +189,20 @@ def persistent_cookie_policy():
         enum = getattr(QWebEngineProfile, "PersistentCookiesPolicy", None)
         if enum is not None:
             value = getattr(enum, "AllowPersistentCookies", None)
+    return value
+
+
+CUSTOM_CONTEXT_MENU = _pick(lambda: Qt.CustomContextMenu,
+                            lambda: Qt.ContextMenuPolicy.CustomContextMenu)
+
+
+def web_action(name):
+    """QWebEnginePage 的动作枚举：Qt5 用 Page.Copy，Qt6 用 Page.WebAction.Copy。"""
+    if QWebEnginePage is None:
+        return None
+    value = getattr(QWebEnginePage, name, None)
+    if value is None:
+        enum = getattr(QWebEnginePage, "WebAction", None)
+        if enum is not None:
+            value = getattr(enum, name, None)
     return value

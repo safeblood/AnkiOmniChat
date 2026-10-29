@@ -16,7 +16,7 @@ panel.py —— 侧边面板主体（OmniChat 布局）。
 """
 
 from aqt.qt import (
-    QButtonGroup, QHBoxLayout, QLabel, QPushButton, QSplitter, QStackedWidget,
+    QButtonGroup, QComboBox, QHBoxLayout, QLabel, QPushButton, QSplitter, QStackedWidget,
     QTextEdit, QTimer, QToolButton, QVBoxLayout, QApplication, QWidget, pyqtSignal,
 )
 from aqt.utils import tooltip
@@ -24,7 +24,7 @@ from aqt.utils import tooltip
 from ..backend import ApiBackend
 from ..qt_compat import (
     CTRL_MOD, KEY_ENTER, KEY_RETURN, PLAIN_TEXT, SHIFT_MOD, TEXT_SELECTABLE,
-    TEXTCURSOR_END, VERTICAL,
+    TEXTCURSOR_END, TOOLTIP_ROLE, VERTICAL,
 )
 from ..session_manager import FREE_KEY
 from . import markdown
@@ -126,6 +126,26 @@ class ChatPanel(QWidget):
         mode_bar.addStretch(1)
         root.addLayout(mode_bar)
 
+        # ---- 提示词切换 ----
+        prompt_bar = QHBoxLayout()
+        prompt_bar.addWidget(QLabel("提示词：", self))
+        self.cmb_prompt = QComboBox(self)
+        # 刻意不设置 AdjustToContents：下拉项带说明文字，随内容伸缩会把侧栏挤变形。
+        # 说明改挂到每项的 tooltip 上，窄面板里也能看清。
+        self.cmb_prompt.setToolTip(
+            "选择注入卡片时用的提问方式。\n"
+            "同一张卡片反复复习时换一种问法，比反复读同一份解释有用。")
+        self.btn_prompt_prev = QToolButton(self)
+        self.btn_prompt_prev.setText("◀")
+        self.btn_prompt_next = QToolButton(self)
+        self.btn_prompt_next.setText("▶")
+        self.btn_prompt_prev.setToolTip("上一个提示词")
+        self.btn_prompt_next.setToolTip("下一个提示词（Ctrl+Alt+P）")
+        prompt_bar.addWidget(self.cmb_prompt, 1)
+        prompt_bar.addWidget(self.btn_prompt_prev)
+        prompt_bar.addWidget(self.btn_prompt_next)
+        root.addLayout(prompt_bar)
+
         # ---- 主体：上消息区 / 下模式区 ----
         self.splitter = QSplitter(VERTICAL, self)
         self.chat_view = ChatView(self.cfg, self)
@@ -162,6 +182,8 @@ class ChatPanel(QWidget):
             note = self.get_note()
             return build_card_text(note, self.cfg) if note is not None else ""
         self.web_page.note_provider = _current_card_text
+        # 右键「抓取到卡片字段」时需要知道当前是哪张卡
+        self.web_page.note_id_provider = lambda: self.get_note_id()
 
         self.bottom.addWidget(self.api_page)
         self.bottom.addWidget(self.web_page)
@@ -183,6 +205,11 @@ class ChatPanel(QWidget):
         self.btn_inject.clicked.connect(lambda: self.inject_card(auto=False))
         self.btn_mode_web.clicked.connect(lambda: self.set_mode("web"))
         self.btn_mode_api.clicked.connect(lambda: self.set_mode("api"))
+        self.btn_prompt_prev.clicked.connect(lambda: self.cycle_prompt(-1))
+        self.btn_prompt_next.clicked.connect(lambda: self.cycle_prompt(1))
+        self.cmb_prompt.currentIndexChanged.connect(self._on_prompt_picked)
+
+        self.refresh_prompts()
 
     # ------------------------------------------------------------------ 状态
     def set_status(self, text):
@@ -219,6 +246,42 @@ class ChatPanel(QWidget):
         self.set_mode(self.cfg.get("general.backend_mode", "web"))
         # 设置里改动过预设后，把网址同步过去
         self.web_page.apply_active_preset()
+
+    # -------------------------------------------------------------- 提示词库
+    def refresh_prompts(self):
+        """重建提示词下拉（设置里增删改之后调用）。"""
+        self.cmb_prompt.blockSignals(True)
+        self.cmb_prompt.clear()
+        cur = self.cfg.active_prompt_id()
+        idx = 0
+        for p in self.cfg.prompt_presets():
+            if not isinstance(p, dict):
+                continue
+            pid = p.get("id")
+            desc = p.get("desc") or ""
+            index = self.cmb_prompt.count()
+            self.cmb_prompt.addItem(p.get("name") or pid or "未命名", pid)
+            if desc:  # 说明进 tooltip，不占下拉的宽度
+                self.cmb_prompt.setItemData(index, desc, TOOLTIP_ROLE)
+            if pid == cur:
+                idx = index
+        self.cmb_prompt.setCurrentIndex(idx)
+        self.cmb_prompt.blockSignals(False)
+        self.cmb_prompt.setVisible(self.cmb_prompt.count() > 1)
+
+    def _on_prompt_picked(self, index):
+        pid = self.cmb_prompt.itemData(index)
+        if pid and self.cfg.set_active_prompt(pid):
+            self.cfg.save()
+
+    def cycle_prompt(self, step=1):
+        """按顺序轮换提示词。同一个问题换个问法，是这套功能最主要的使用方式。"""
+        p = self.cfg.cycle_prompt(step)
+        if not p:
+            return
+        self.cfg.save()
+        self.refresh_prompts()
+        tooltip("提示词：%s" % (p.get("name") or p.get("id")))
 
     def apply_web_flags(self):
         """设置保存后把网页模式的开关同步到控件（如『发送』按钮的可用状态）。"""
@@ -282,8 +345,9 @@ class ChatPanel(QWidget):
         mode = self.cfg.get("general.backend_mode", "web")
         if mode == "web":
             auto_paste = bool(self.cfg.get("web.auto_paste_on_inject", False))
-            # 记录到历史，便于回看"当时问了什么"
-            self.sessions.add_message(self.current_key, "note", text)
+            # 记录到历史，便于回看"当时问了什么"。
+            # 用 upsert 而不是 add：同一张卡反复复习时上下文不该堆成一串重复块
+            self.sessions.upsert_context(self.current_key, text)
             self.chat_view.set_messages(self.sessions.messages(self.current_key))
             self.chat_view.scroll_bottom()
             self.web_page.set_pending_text(text)

@@ -6,6 +6,7 @@ settings.py —— 设置对话框。
 保存后立即写回 Anki 配置，并通过回调通知主程序重新应用（快捷键、预设、面板宽度等）。
 """
 
+import copy
 import os
 import subprocess
 import sys
@@ -13,15 +14,16 @@ import sys
 from aqt import mw
 from aqt.qt import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QSpinBox, QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout,
     QWidget,
 )
 from aqt.utils import tooltip
 
-from ..config import data_dir
+from ..config import DEFAULT_PROMPTS, data_dir
 from ..qt_compat import (
-    HEADER_STRETCH, LINEEDIT_PASSWORD, MSGBOX_YES, TEXT_SELECTABLE, _std_button,
+    HEADER_STRETCH, LINEEDIT_PASSWORD, MSGBOX_NO, MSGBOX_YES, NO_EDIT_TRIGGERS, SELECT_ROWS,
+    SINGLE_SELECTION, TEXT_SELECTABLE, USER_ROLE, _std_button,
 )
 
 
@@ -95,6 +97,19 @@ class SettingsDialog(QDialog):
         i = self.cmb_dock.findData(self.cfg.get("general.dock_area", "right"))
         self.cmb_dock.setCurrentIndex(max(0, i))
         form.addRow("停靠位置：", self.cmb_dock)
+
+        self.cmb_write = QComboBox(w)
+        self.cmb_write.addItem("存 Markdown 源码（推荐）", "markdown")
+        self.cmb_write.addItem("渲染成 HTML 再写入", "rendered")
+        self.cmb_write.addItem("原样写入（富文本）", "html")
+        i = self.cmb_write.findData(self.cfg.get("general.write_format", "markdown"))
+        self.cmb_write.setCurrentIndex(max(0, i))
+        self.cmb_write.setToolTip(
+            "Anki 字段本身是一段 HTML，内容里的 < > & 会被当标签解析而丢失。\n"
+            "『存 Markdown 源码』会把这些字符转义，编辑区看到源码、复习界面显示正常文本；\n"
+            "『渲染成 HTML』会把 Markdown 排版后写入，复习时直接看到效果；\n"
+            "『原样写入』只在内容本来就是 HTML 时用（例如右键的『抓取为富文本』）。")
+        form.addRow("写入字段时：", self.cmb_write)
 
         return w
 
@@ -223,20 +238,15 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------ 注入
     def _build_inject(self):
         w = QWidget(self)
-        form = QFormLayout(w)
+        layout = QVBoxLayout(w)
+
+        # ---- 字段拼接（与提问方式无关） ----
+        common = QGroupBox("字段拼接", w)
+        form = QFormLayout(common)
 
         self.edit_template = QLineEdit(self.cfg.get("inject.template", "{name}：{value}"), w)
+        self.edit_template.setToolTip("{name} 字段名、{value} 字段值")
         form.addRow("字段模板：", self.edit_template)
-
-        self.edit_prefix = QTextEdit(w)
-        self.edit_prefix.setPlainText(self.cfg.get("inject.prefix", ""))
-        self.edit_prefix.setMaximumHeight(70)
-        form.addRow("前缀：", self.edit_prefix)
-
-        self.edit_suffix = QTextEdit(w)
-        self.edit_suffix.setPlainText(self.cfg.get("inject.suffix", ""))
-        self.edit_suffix.setMaximumHeight(70)
-        form.addRow("后缀：", self.edit_suffix)
 
         self.edit_exclude = QLineEdit(self.cfg.get("inject.exclude_fields", ""), w)
         self.edit_exclude.setPlaceholderText("用逗号分隔，例如：额外,备注")
@@ -245,7 +255,204 @@ class SettingsDialog(QDialog):
         self.chk_strip = QCheckBox("注入时剥离 HTML 标签", w)
         self.chk_strip.setChecked(bool(self.cfg.get("inject.strip_html", True)))
         form.addRow("", self.chk_strip)
+        layout.addWidget(common)
+
+        # ---- 提示词库 ----
+        box = QGroupBox("提示词库", w)
+        bl = QVBoxLayout(box)
+
+        tip = QLabel("注入卡片时使用哪一套提问方式。复习同一张卡时换一种问法，"
+                     "往往比反复读同一份解释有用。", w)
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color:#888;font-size:11px;")
+        bl.addWidget(tip)
+
+        self.prompt_table = QTableWidget(0, 2, w)
+        self.prompt_table.setHorizontalHeaderLabels(["名称", "说明"])
+        self.prompt_table.setSelectionBehavior(SELECT_ROWS)
+        self.prompt_table.setSelectionMode(SINGLE_SELECTION)
+        self.prompt_table.setEditTriggers(NO_EDIT_TRIGGERS)
+        self.prompt_table.horizontalHeader().setSectionResizeMode(HEADER_STRETCH)
+        self.prompt_table.verticalHeader().setVisible(False)
+        for p in self.cfg.prompt_presets():
+            self._add_prompt_row(p)
+        self.prompt_table.currentCellChanged.connect(self._on_prompt_cell_changed)
+        bl.addWidget(self.prompt_table, 1)
+
+        row = QHBoxLayout()
+        btn_add = QPushButton("新增", w)
+        btn_copy = QPushButton("复制一份", w)
+        btn_del = QPushButton("删除", w)
+        btn_up = QPushButton("上移", w)
+        btn_down = QPushButton("下移", w)
+        btn_reset = QPushButton("恢复内置", w)
+        btn_add.clicked.connect(lambda: self._add_prompt_row(
+            {"id": "custom-%d" % (self.prompt_table.rowCount() + 1),
+             "name": "新提示词", "desc": "", "prefix": "", "suffix": ""}))
+        btn_copy.clicked.connect(self._copy_prompt_row)
+        btn_del.clicked.connect(self._del_prompt_row)
+        btn_up.clicked.connect(lambda: self._move_prompt_row(-1))
+        btn_down.clicked.connect(lambda: self._move_prompt_row(1))
+        btn_reset.clicked.connect(self._reset_prompts)
+        for b in (btn_add, btn_copy, btn_del, btn_up, btn_down, btn_reset):
+            row.addWidget(b)
+        row.addStretch(1)
+        bl.addLayout(row)
+
+        active_row = QHBoxLayout()
+        active_row.addWidget(QLabel("当前使用：", w))
+        self.cmb_active_prompt = QComboBox(w)
+        self.cmb_active_prompt.setMinimumWidth(220)
+        active_row.addWidget(self.cmb_active_prompt, 1)
+        active_row.addStretch(1)
+        bl.addLayout(active_row)
+
+        edit_form = QFormLayout()
+        self.pmt_name = QLineEdit(w)
+        self.pmt_desc = QLineEdit(w)
+        self.pmt_desc.setPlaceholderText("一句话说明这套提示词适合什么时候用")
+        self.pmt_prefix = QTextEdit(w)
+        self.pmt_prefix.setMaximumHeight(110)
+        self.pmt_suffix = QTextEdit(w)
+        self.pmt_suffix.setMaximumHeight(70)
+        edit_form.addRow("名称：", self.pmt_name)
+        edit_form.addRow("说明：", self.pmt_desc)
+        edit_form.addRow("前缀：", self.pmt_prefix)
+        edit_form.addRow("后缀：", self.pmt_suffix)
+        bl.addLayout(edit_form)
+
+        hint = QLabel("前缀 / 后缀里写 {card} 可以把卡片正文插到那个位置；"
+                      "不写则默认夹在两者之间。", w)
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#888;font-size:11px;")
+        bl.addWidget(hint)
+
+        self._pmt_row = None
+        self._reload_prompt_combo()
+        if self.prompt_table.rowCount() > 0:
+            self.prompt_table.selectRow(0)
+            self._load_prompt_row(0)
+        layout.addWidget(box, 1)
         return w
+
+    # ---------- 提示词表格 ----------
+    def _add_prompt_row(self, prompt):
+        r = self.prompt_table.rowCount()
+        self.prompt_table.insertRow(r)
+        data = {
+            "id": prompt.get("id") or "custom-%d" % (r + 1),
+            "name": prompt.get("name") or "未命名",
+            "desc": prompt.get("desc") or "",
+            "prefix": prompt.get("prefix") or "",
+            "suffix": prompt.get("suffix") or "",
+        }
+        item = QTableWidgetItem(data["name"])
+        item.setData(USER_ROLE, data)
+        self.prompt_table.setItem(r, 0, item)
+        self.prompt_table.setItem(r, 1, QTableWidgetItem(data["desc"]))
+        self._reload_prompt_combo()
+        return r
+
+    def _flush_prompt_row(self):
+        """把编辑区的内容写回当前行（切行 / 保存前都必须先调用）。"""
+        row = self._pmt_row
+        if row is None or row >= self.prompt_table.rowCount():
+            return
+        item = self.prompt_table.item(row, 0)
+        if item is None:
+            return
+        data = item.data(USER_ROLE) or {}
+        data["name"] = (self.pmt_name.text() or "未命名").strip() or "未命名"
+        data["desc"] = self.pmt_desc.text() or ""
+        data["prefix"] = self.pmt_prefix.toPlainText()
+        data["suffix"] = self.pmt_suffix.toPlainText()
+        item.setText(data["name"])
+        item.setData(USER_ROLE, data)
+        self.prompt_table.item(row, 1).setText(data["desc"])
+
+    def _load_prompt_row(self, row):
+        item = self.prompt_table.item(row, 0)
+        if item is None:
+            return
+        data = item.data(USER_ROLE) or {}
+        self.pmt_name.setText(data.get("name") or "")
+        self.pmt_desc.setText(data.get("desc") or "")
+        self.pmt_prefix.setPlainText(data.get("prefix") or "")
+        self.pmt_suffix.setPlainText(data.get("suffix") or "")
+        self._pmt_row = row
+
+    def _on_prompt_cell_changed(self, row, _col, prev, _prev_col):
+        self._flush_prompt_row()
+        if row >= 0:
+            self._load_prompt_row(row)
+
+    def _copy_prompt_row(self):
+        self._flush_prompt_row()
+        row = self.prompt_table.currentRow()
+        if row < 0:
+            return
+        data = dict(self.prompt_table.item(row, 0).data(USER_ROLE) or {})
+        data["id"] = "custom-%d" % (self.prompt_table.rowCount() + 1)
+        data["name"] = (data.get("name") or "") + " 副本"
+        self._add_prompt_row(data)
+        self.prompt_table.selectRow(self.prompt_table.rowCount() - 1)
+
+    def _del_prompt_row(self):
+        row = self.prompt_table.currentRow()
+        if row < 0:
+            return
+        self._pmt_row = None
+        self.prompt_table.removeRow(row)
+        self._reload_prompt_combo()
+
+    def _move_prompt_row(self, delta):
+        self._flush_prompt_row()
+        row = self.prompt_table.currentRow()
+        target = row + delta
+        if row < 0 or target < 0 or target >= self.prompt_table.rowCount():
+            return
+        datas = [dict(self.prompt_table.item(r, 0).data(USER_ROLE) or {})
+                 for r in range(self.prompt_table.rowCount())]
+        datas[row], datas[target] = datas[target], datas[row]
+        self.prompt_table.blockSignals(True)
+        for r, d in enumerate(datas):
+            item = QTableWidgetItem(d.get("name") or "")
+            item.setData(USER_ROLE, d)
+            self.prompt_table.setItem(r, 0, item)
+            self.prompt_table.setItem(r, 1, QTableWidgetItem(d.get("desc") or ""))
+        self.prompt_table.blockSignals(False)
+        self.prompt_table.selectRow(target)
+        self._load_prompt_row(target)
+
+    def _reset_prompts(self):
+        """丢弃当前列表，恢复内置提示词（用户自建的会丢，先问一句）。"""
+        if MSGBOX_YES != QMessageBox.question(
+                self, "AnkiOmniChat",
+                "恢复内置提示词？你自建的那些会被移除。", MSGBOX_YES | MSGBOX_NO):
+            return
+        self.prompt_table.blockSignals(True)
+        self.prompt_table.setRowCount(0)
+        self._pmt_row = None
+        for p in DEFAULT_PROMPTS:
+            self._add_prompt_row(p)
+        self.prompt_table.blockSignals(False)
+        self._reload_prompt_combo()
+        if self.prompt_table.rowCount() > 0:
+            self.prompt_table.selectRow(0)
+            self._load_prompt_row(0)
+
+    def _reload_prompt_combo(self):
+        cur = self.cfg.active_prompt_id()
+        self.cmb_active_prompt.blockSignals(True)
+        self.cmb_active_prompt.clear()
+        idx = 0
+        for r in range(self.prompt_table.rowCount()):
+            data = self.prompt_table.item(r, 0).data(USER_ROLE) or {}
+            self.cmb_active_prompt.addItem(data.get("name") or "未命名", data.get("id"))
+            if data.get("id") == cur:
+                idx = r
+        self.cmb_active_prompt.setCurrentIndex(idx)
+        self.cmb_active_prompt.blockSignals(False)
 
     # ------------------------------------------------------------------ 快捷键
     def _build_shortcuts(self):
@@ -256,6 +463,7 @@ class SettingsDialog(QDialog):
             "toggle_panel": "显示/隐藏侧边栏：",
             "inject_card": "注入当前卡片：",
             "focus_input": "聚焦输入框：",
+            "cycle_prompt": "切换下一个提示词：",
             "send": "发送（输入框内）：",
         }
         for key, label in labels.items():
@@ -317,6 +525,33 @@ class SettingsDialog(QDialog):
             tooltip("已清空全部会话历史")
 
     # ------------------------------------------------------------------ 保存
+    def _save_prompts(self):
+        """把表格里的提示词写回配置，并决定哪一条是当前使用的。"""
+        self._flush_prompt_row()
+        prompts = []
+        seen = set()
+        for r in range(self.prompt_table.rowCount()):
+            item = self.prompt_table.item(r, 0)
+            if item is None:
+                continue
+            data = dict(item.data(USER_ROLE) or {})
+            pid = data.get("id") or "custom-%d" % (r + 1)
+            # 「复制一份」会产生同 id 的两条，去重否则 set_active_prompt 认错人
+            base, n = pid, 1
+            while pid in seen:
+                n += 1
+                pid = "%s-%d" % (base, n)
+            data["id"] = pid
+            seen.add(pid)
+            prompts.append(data)
+
+        if not prompts:
+            prompts = copy.deepcopy(DEFAULT_PROMPTS)
+        self.cfg.set_prompt_presets(prompts)
+
+        if not self.cfg.set_active_prompt(self.cmb_active_prompt.currentData()):
+            self.cfg.set_active_prompt(prompts[0]["id"])
+
     def _apply(self):
         self.cfg.set("general.backend_mode", self.cmb_mode.currentData() or "web")
         self.cfg.set("general.auto_switch_session", self.chk_switch.isChecked())
@@ -326,6 +561,7 @@ class SettingsDialog(QDialog):
         self.cfg.set("general.history_limit", self.spin_history.value())
         self.cfg.set("general.panel_width", self.spin_width.value())
         self.cfg.set("general.dock_area", self.cmb_dock.currentData() or "right")
+        self.cfg.set("general.write_format", self.cmb_write.currentData() or "markdown")
 
         self.cfg.set("web.auto_paste_on_inject", self.chk_auto_paste.isChecked())
         self.cfg.set("web.auto_send", self.chk_auto_send.isChecked())
@@ -370,10 +606,9 @@ class SettingsDialog(QDialog):
         self.cfg.set("api.system_prompt", self.edit_system.toPlainText())
 
         self.cfg.set("inject.template", self.edit_template.text())
-        self.cfg.set("inject.prefix", self.edit_prefix.toPlainText())
-        self.cfg.set("inject.suffix", self.edit_suffix.toPlainText())
         self.cfg.set("inject.exclude_fields", self.edit_exclude.text())
         self.cfg.set("inject.strip_html", self.chk_strip.isChecked())
+        self._save_prompts()
 
         for key, edit in self.sc_edits.items():
             self.cfg.set("shortcuts.%s" % key, edit.text().strip())

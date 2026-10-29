@@ -318,6 +318,8 @@ class OmniChatApp(QObject):
         register(self.cfg.get("shortcuts.inject_card", ""),
                  lambda: self.panel.inject_card(auto=False))
         register(self.cfg.get("shortcuts.focus_input", ""), self.focus_input)
+        register(self.cfg.get("shortcuts.cycle_prompt", ""),
+                 lambda: self.panel.cycle_prompt(1))
         register(self.cfg.get("shortcuts.send", ""), self.panel.send,
                  widget=self.panel, context=WIDGET_CHILDREN_SHORTCUT)
 
@@ -330,6 +332,41 @@ class OmniChatApp(QObject):
         except Exception:
             pass
 
+    def reload_for_profile(self):
+        """
+        切换到另一个 profile（或插件被重新加载）后的重建流程。
+
+        顺序不能调换：
+          1. 先 flush —— 此时 SessionManager 的落盘路径还指向「上一个」profile，
+             未落盘的改动会回到它自己家里；
+          2. 再 cfg.load() —— 这一步之后 data_dir 才切到新 profile；
+          3. 最后 sessions.reload() —— 在新路径下重新读盘，并把步骤 1 之后
+             可能排队的定时器停掉。
+
+        少了第 3 步的话，内存里还是旧 profile 的会话字典，下一次自动落盘就会把整份
+        历史写进新 profile 的 sessions.json。
+        """
+        try:
+            self.sessions.flush()
+        except Exception:
+            pass
+        try:
+            self.cfg.load()
+        except Exception:
+            pass
+        try:
+            self.sessions.reload()
+        except Exception:
+            pass
+        # 上一张卡属于旧 profile，别让去重判断把下一张卡误判成"没换卡"
+        self._last_note_id = None
+        # 会话字典已换成新 profile 的，按当前 key 重绘消息区（取不到就自然显示为空）
+        try:
+            self.panel.switch_session(self.panel.current_key)
+        except Exception:
+            pass
+        self.apply_config()
+
     # ---------------------------------------------------------------- 设置
     def open_settings(self):
         open_settings_dialog(self.cfg, self.sessions, on_saved=self.apply_config, parent=mw)
@@ -339,6 +376,7 @@ class OmniChatApp(QObject):
         try:
             self._build_shortcuts()
             self.panel.refresh_presets()
+            self.panel.refresh_prompts()
             self.panel.apply_web_flags()
             self.panel.set_mode(self.cfg.get("general.backend_mode", "web"))
             if self._dock is not None and self._dock_owner is not None:
@@ -362,6 +400,8 @@ class OmniChatApp(QObject):
                 return
             if action in ("append", "overwrite"):
                 nid = self.current_note_id() or self._last_note_id
+                # content_format 留空 -> 读配置项 general.write_format。
+                # 会话里存的是 AI 回答的 Markdown 源码，默认按源码转义写入。
                 apply_to_field(nid, content, "overwrite" if action == "overwrite" else "append")
                 return
         except Exception:
@@ -532,9 +572,8 @@ def init_addon():
         if _app is None:
             _app = OmniChatApp()
         else:
-            # 切换 profile / 重载插件：重新读配置并刷新界面
-            _app.cfg.load()
-            _app.apply_config()
+            # 切换 profile / 重载插件：按顺序重新读配置与会话
+            _app.reload_for_profile()
         return _app
     except Exception as e:
         try:

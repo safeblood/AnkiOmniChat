@@ -259,6 +259,253 @@ JS_CLICK_SEND = """
 """
 
 
+# 抓取网页内容并转成 Markdown。
+#
+# 取源优先级：网页里当前选中的内容 > 最后一条 AI 回答（复用 JS_SCRAPE_REPLY 的选择器链）。
+# 转换成 Markdown 是为了保住代码块 / 列表 / 表格 / 标题这些结构——直接用 innerText 会把
+# 它们揉成一坨丢格式的纯文本。
+JS_SCRAPE_MARKDOWN = r"""
+(function(sel){
+  try {
+    // 交互控件不该进正文，否则会在抓出来的内容末尾冒出一个「复制」之类的按钮文案
+    var SKIP = {script:1, style:1, noscript:1, template:1,
+                button:1, input:1, select:1, textarea:1, svg:1};
+    var BLOCK = {p:1, div:1, section:1, article:1, figure:1, main:1, header:1, footer:1,
+                 header_:0, pre:1, blockquote:1, ul:1, ol:1, table:1, h1:1, h2:1, h3:1,
+                 h4:1, h5:1, h6:1};
+
+    function picked(){
+      try {
+        var s = window.getSelection();
+        if (!s || s.rangeCount === 0 || s.isCollapsed) return null;
+        var r = s.getRangeAt(0);
+        if (!r || !(r.toString() || "").trim()) return null;
+        var wrap = document.createElement("div");
+        wrap.appendChild(r.cloneContents());
+        return wrap;
+      } catch (e) { return null; }
+    }
+
+    function lastAnswer(){
+      var sels = [];
+      if (sel) sels.push(sel);
+      sels = sels.concat([
+        "[data-role='assistant']", "[data-message-author='assistant']",
+        ".markdown-body", "article", "main .message",
+        "div[class*='answer']", "div[class*='message-content']", "div[class*='assistant']"
+      ]);
+      for (var i = 0; i < sels.length; i++) {
+        try {
+          var nl = document.querySelectorAll(sels[i]);
+          if (!nl || !nl.length) continue;
+          for (var j = nl.length - 1; j >= 0; j--) {
+            if ((nl[j].innerText || "").trim()) return nl[j];
+          }
+        } catch (e) {}
+      }
+      return null;
+    }
+
+    function fence(el){
+      var code = el.querySelector("code");
+      var src = code || el;
+      var lang = "";
+      if (code) {
+        var mm = /language-([A-Za-z0-9_+-]+)/.exec(code.className || "");
+        if (mm) lang = mm[1];
+      }
+      var txt = (src.textContent || "").replace(/\s+$/, "");
+      return "```" + (lang || "") + "\n" + txt + "\n```";
+    }
+
+    // inlineNode: 给「元素自身」加上 Markdown 标记，内部文本交给 inline。
+    // 必须分成两个函数——inline 只负责把子节点拼起来，不会给 el 自己加标记；
+    // 而 blocks / listBlock 遍历到的是一个完整的元素，若不走这一层，选区模式下
+    // <strong>、<code>、<a> 的标记就会整批丢失。
+    function inlineNode(el){
+      var tag = (el.tagName || "").toLowerCase();
+      var inner = inline(el);
+      if (tag === "strong" || tag === "b") return "**" + inner + "**";
+      if (tag === "em" || tag === "i") return "*" + inner + "*";
+      if (tag === "del" || tag === "s") return "~~" + inner + "~~";
+      if (tag === "code") return "`" + (el.textContent || "").replace(/\n/g, " ") + "`";
+      if (tag === "br") return "\n";
+      // Markdown 没有上/下标语法，保留原标签，Anki 字段和多数渲染器都能正确显示
+      if (tag === "sup" || tag === "sub") return "<" + tag + ">" + inner + "</" + tag + ">";
+      if (tag === "a") {
+        var h = el.getAttribute("href") || "";
+        return (h && inner.trim()) ? ("[" + inner.trim() + "](" + h + ")") : (inner || h);
+      }
+      if (tag === "img") {
+        var img = el.getAttribute("src") || "";
+        return img ? ("![" + (el.getAttribute("alt") || "") + "](" + img + ")") : "";
+      }
+      return inner;
+    }
+
+    function inline(node){
+      var s = "", kids = node.childNodes || [];
+      for (var i = 0; i < kids.length; i++) {
+        var el = kids[i];
+        if (el.nodeType === 3) { s += el.nodeValue; continue; }
+        if (el.nodeType !== 1) continue;
+        var tag = (el.tagName || "").toLowerCase();
+        if (SKIP[tag]) continue;
+        s += inlineNode(el);
+      }
+      return s;
+    }
+
+    function listBlock(el, depth, ordered){
+      var out = [], idx = 0, kids = el.children || [];
+      for (var i = 0; i < kids.length; i++) {
+        var li = kids[i];
+        if ((li.tagName || "").toLowerCase() !== "li") continue;
+        idx++;
+        var own = "", cn = li.childNodes || [];
+        for (var k = 0; k < cn.length; k++) {
+          var c = cn[k];
+          if (c.nodeType === 3) { own += c.nodeValue; continue; }
+          if (c.nodeType !== 1) continue;
+          var ct = (c.tagName || "").toLowerCase();
+          if (ct === "ul" || ct === "ol") continue;
+          if (SKIP[ct]) continue;
+          own += inlineNode(c);
+        }
+        var pad = new Array(depth + 1).join("  ");
+        out.push(pad + (ordered ? (idx + ". ") : "- ") + own.trim());
+        var subs = li.querySelectorAll(":scope > ul, :scope > ol");
+        for (var j = 0; j < subs.length; j++) {
+          out.push(listBlock(subs[j], depth + 1,
+                             (subs[j].tagName || "").toLowerCase() === "ol"));
+        }
+      }
+      return out.join("\n");
+    }
+
+    function tableBlock(el){
+      var rows = [], trs = el.querySelectorAll("tr");
+      for (var i = 0; i < trs.length; i++) {
+        var cells = trs[i].children, line = [];
+        for (var j = 0; j < cells.length; j++) {
+          line.push(inline(cells[j]).trim().replace(/\|/g, "\\|"));
+        }
+        if (!line.length) continue;
+        rows.push("| " + line.join(" | ") + " |");
+        if (i === 0) {
+          var sep = [];
+          for (var k = 0; k < line.length; k++) sep.push("---");
+          rows.push("| " + sep.join(" | ") + " |");
+        }
+      }
+      return rows.join("\n");
+    }
+
+    function blocks(node){
+      var md = "", kids = node.childNodes || [];
+      for (var i = 0; i < kids.length; i++) {
+        var el = kids[i];
+        if (el.nodeType === 3) {
+          var raw = el.nodeValue || "";
+          if (raw.trim()) md += raw.replace(/[ \t]+/g, " ");
+          continue;
+        }
+        if (el.nodeType !== 1) continue;
+        var tag = (el.tagName || "").toLowerCase();
+        if (SKIP[tag]) continue;
+        if (tag === "br") { md += "\n"; continue; }
+        if (tag === "hr") { md += "\n\n---\n\n"; continue; }
+        if (/^h[1-6]$/.test(tag)) {
+          var lv = parseInt(tag.charAt(1), 10);
+          md += "\n\n" + new Array(lv + 1).join("#") + " " + inline(el).trim() + "\n\n";
+        } else if (tag === "pre") {
+          md += "\n\n" + fence(el) + "\n\n";
+        } else if (tag === "blockquote") {
+          md += "\n\n" + inline(el).trim().split("\n").map(function(x){
+            return "> " + x;
+          }).join("\n") + "\n\n";
+        } else if (tag === "ul" || tag === "ol") {
+          md += "\n\n" + listBlock(el, 0, tag === "ol") + "\n\n";
+        } else if (tag === "table") {
+          md += "\n\n" + tableBlock(el) + "\n\n";
+        } else if (tag === "p") {
+          md += "\n\n" + inline(el).trim() + "\n\n";
+        } else if (BLOCK[tag]) {
+          md += "\n\n" + blocks(el).trim() + "\n\n";
+        } else {
+          md += inlineNode(el);
+        }
+      }
+      return md;
+    }
+
+    var src = picked() || lastAnswer();
+    if (!src) return "";
+    // lastAnswer 拿到的是页面上的真实节点，必须先 clone 再清理，否则等于改坏用户的网页
+    var root = src.cloneNode(true);
+    var junk = root.querySelectorAll(
+      "button, input, select, textarea, svg, [role='button'], [class*='copy'], [class*='toolbar']");
+    for (var n = 0; n < junk.length; n++) {
+      try { junk[n].parentNode.removeChild(junk[n]); } catch (e) {}
+    }
+    var out = blocks(root);
+    out = out.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+    return out.trim();
+  } catch (e) {
+    return "";
+  }
+})(%s);
+"""
+
+# 抓取网页内容为富文本 HTML（保留原网页的渲染效果，直接能在 Anki 字段里正确显示）。
+JS_SCRAPE_HTML = r"""
+(function(sel){
+  try {
+    function picked(){
+      try {
+        var s = window.getSelection();
+        if (!s || s.rangeCount === 0 || s.isCollapsed) return null;
+        var r = s.getRangeAt(0);
+        if (!r || !(r.toString() || "").trim()) return null;
+        var wrap = document.createElement("div");
+        wrap.appendChild(r.cloneContents());
+        return wrap;
+      } catch (e) { return null; }
+    }
+    function lastAnswer(){
+      var sels = [];
+      if (sel) sels.push(sel);
+      sels = sels.concat([
+        "[data-role='assistant']", "[data-message-author='assistant']",
+        ".markdown-body", "article", "main .message",
+        "div[class*='answer']", "div[class*='message-content']", "div[class*='assistant']"
+      ]);
+      for (var i = 0; i < sels.length; i++) {
+        try {
+          var nl = document.querySelectorAll(sels[i]);
+          if (!nl || !nl.length) continue;
+          for (var j = nl.length - 1; j >= 0; j--) {
+            if ((nl[j].innerText || "").trim()) return nl[j];
+          }
+        } catch (e) {}
+      }
+      return null;
+    }
+    var root = picked() || lastAnswer();
+    if (!root) return "";
+    // 选区是 clone 出来的副本，改动不会影响页面本身
+    var junk = root.querySelectorAll("button, svg, [role='button'], [class*='copy'], [class*='toolbar']");
+    for (var i = 0; i < junk.length; i++) {
+      try { junk[i].parentNode.removeChild(junk[i]); } catch (e) {}
+    }
+    return (root.innerHTML || "").trim();
+  } catch (e) {
+    return "";
+  }
+})(%s);
+"""
+
+
 class WebBackend(object):
     """
     模式 A：网页内嵌免费模式。
@@ -284,6 +531,14 @@ class WebBackend(object):
 
     def scrape_script(self, selector=""):
         return JS_SCRAPE_REPLY % json.dumps(selector or "")
+
+    def markdown_script(self, selector=""):
+        """生成「抓取为 Markdown」脚本；有网页选区时抓选区，否则抓最后一条回复。"""
+        return JS_SCRAPE_MARKDOWN % json.dumps(selector or "")
+
+    def html_script(self, selector=""):
+        """生成「抓取为富文本 HTML」脚本；取源规则同 markdown_script。"""
+        return JS_SCRAPE_HTML % json.dumps(selector or "")
 
     def send_script(self, selector=""):
         return JS_CLICK_SEND % json.dumps(selector or "")

@@ -95,6 +95,23 @@ class SessionManager(QObject):
             self._data = {"version": SESSION_FILE_VERSION, "sessions": {}, "order": []}
         return self
 
+    def reload(self):
+        """切换到另一个 profile 后重新读盘。
+
+        两件事缺一不可：
+
+        1. 先停掉待触发的写盘定时器 —— flush 的目标是「当前」路径（由 data_dir 算出），
+           晚一步执行就会把上一个 profile 的会话写进别人的 sessions.json。
+        2. 先把内存清干净再 load() —— load() 在目标文件不存在时会提前返回自保，
+           不清的话新 profile 一上来就「继承」了旧 profile 的全部历史。
+        """
+        try:
+            self._timer.stop()
+        except Exception:
+            pass
+        self._data = {"version": SESSION_FILE_VERSION, "sessions": {}, "order": []}
+        return self.load()
+
     def flush(self):
         """原子写入磁盘。"""
         path = self.path()
@@ -170,6 +187,28 @@ class SessionManager(QObject):
 
         self._schedule_flush()
         return msg
+
+    def upsert_context(self, key, content, meta=None):
+        """
+        写入「卡片上下文」类消息（role=note）。
+
+        与 add_message 的区别在于幂等：上下文代表"这张卡现在的内容"，重复注入同一份
+        （同一张卡反复复习、按 Again 回到原题再翻答案）不该在会话里堆出一串相同的大段
+        文本，否则真正有价值的问答会被 max_messages_per_session 挤出历史窗口。
+
+        规则：上一条正好是 note 就覆盖内容与时间戳；否则追加一条。
+        """
+        sess = self.get(key)
+        msgs = sess.setdefault("messages", [])
+        if msgs and msgs[-1].get("role") == "note":
+            msgs[-1]["content"] = content or ""
+            msgs[-1]["ts"] = _now()
+            if meta:
+                msgs[-1]["meta"] = meta
+            sess["updated"] = _now()
+            self._schedule_flush()
+            return msgs[-1]
+        return self.add_message(key, "note", content, meta=meta)
 
     def message_by_id(self, key, msg_id):
         for m in self.messages(key):

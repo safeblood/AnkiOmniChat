@@ -15,7 +15,7 @@ import os
 
 from aqt.qt import (
     QApplication, QComboBox, QDesktopServices, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSize, QUrl, QVBoxLayout, QWidget, pyqtSignal,
+    QMenu, QPushButton, QSize, QUrl, QVBoxLayout, QWidget, pyqtSignal,
 )
 from aqt.utils import tooltip
 
@@ -23,8 +23,9 @@ from ..backend import WebBackend
 from ..config import data_dir
 from ..qt_compat import (
     QWebEnginePage, QWebEngineProfile, QWebEngineView, persistent_cookie_policy,
-    set_web_attr, web_engine_available,
+    set_web_attr, web_engine_available, CUSTOM_CONTEXT_MENU, web_action,
 )
+from .actions import apply_to_field
 
 _PROFILE = None  # QWebEngineProfile 单例：整个进程只创建一次
 
@@ -139,6 +140,7 @@ class WebPanel(QWidget):
             self.view = QWebEngineView(self)
             self.page = QWebEnginePage(get_profile(cfg, self), self.view)
             self.view.setPage(self.page)
+            self._setup_context_menu()
             root.addWidget(self.view, 1)
         else:
             self.view = None
@@ -159,6 +161,8 @@ class WebPanel(QWidget):
         self._last_text = ""
         # 由 ChatPanel 注入：返回当前卡片文本，用于待粘贴区为空时兜底
         self.note_provider = lambda: ""
+        # 由 ChatPanel 注入：返回当前 Note ID，用于把抓到的内容写回 Anki 字段
+        self.note_id_provider = lambda: None
         self.refresh_presets()
         self.open_preset(self.cfg.active_preset(), auto=True)
 
@@ -255,6 +259,116 @@ class WebPanel(QWidget):
             tooltip("请先填写网页地址")
             return
         self.load_url(url)
+
+    # ---------------------------------------------------------- 右键菜单 / 抓取
+    def _setup_context_menu(self):
+        """接管网页右键，挂上「抓取到卡片字段」动作。
+
+        用了 CustomContextMenu 之后 Qt 自带的网页菜单（复制/粘贴/全选）就不再弹出，
+        所以菜单里手工补回这几项，仍然走 QWebEnginePage.triggerAction，行为与原生一致。
+        —— 网页模式下「在网页里选中并复制 AI 回答」是高频操作，不能弄丢。
+        """
+        if self.view is None or CUSTOM_CONTEXT_MENU is None:
+            return
+        try:
+            self.view.setContextMenuPolicy(CUSTOM_CONTEXT_MENU)
+            self.view.customContextMenuRequested.connect(self._show_context_menu)
+        except Exception:
+            pass
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+        has_sel = False
+        try:
+            has_sel = bool(self.page.hasSelection()) if self.page is not None else False
+        except Exception:
+            pass
+
+        scope = "选中内容" if has_sel else "最后一条回复"
+        act_md = menu.addAction("抓取%s为 Markdown → 追加到卡片字段" % scope)
+        act_html = menu.addAction("抓取%s为富文本 → 追加到卡片字段" % scope)
+        menu.addSeparator()
+        act_copy = menu.addAction("复制")
+        act_paste = menu.addAction("粘贴")
+        act_all = menu.addAction("全选")
+        menu.addSeparator()
+        act_reload = menu.addAction("刷新")
+
+        chosen = menu.exec(self.view.mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is act_md:
+            self.scrape_markdown()
+        elif chosen is act_html:
+            self.scrape_html()
+        elif chosen is act_copy:
+            self._trigger_web_action("Copy")
+        elif chosen is act_paste:
+            self._trigger_web_action("Paste")
+        elif chosen is act_all:
+            self._trigger_web_action("SelectAll")
+        elif chosen is act_reload:
+            self.reload()
+
+    def _trigger_web_action(self, name):
+        act = web_action(name)
+        if act is None or self.page is None:
+            return
+        try:
+            self.page.triggerAction(act)
+        except Exception:
+            pass
+
+    def _reply_selector(self):
+        preset = self.cfg.active_preset() or {}
+        return preset.get("reply_selector", "") or ""
+
+    def _run_scrape(self, js, callback):
+        if self.page is None:
+            tooltip("当前环境无 WebView，无法抓取")
+            return
+        try:
+            self.page.runJavaScript(js, callback)
+        except Exception:
+            tooltip("抓取失败")
+
+    def scrape_markdown(self):
+        self._run_scrape(self.backend.markdown_script(self._reply_selector()),
+                         self._on_markdown_result)
+
+    def scrape_html(self):
+        self._run_scrape(self.backend.html_script(self._reply_selector()),
+                         self._on_html_result)
+
+    def _on_markdown_result(self, text):
+        text = (text or "").strip()
+        if not text:
+            tooltip("没能抓到内容：可先在网页里选中要抓取的部分")
+            return
+        self._write_to_field(text, content_format="markdown")
+
+    def _on_html_result(self, html):
+        html = (html or "").strip()
+        if not html:
+            tooltip("没能抓到内容：可先在网页里选中要抓取的部分")
+            return
+        # 富文本本身就是 HTML，直接写；转义反而会把标签变成可见字符
+        self._write_to_field(html, content_format="html")
+
+    def _write_to_field(self, text, content_format="markdown"):
+        """把抓到的内容追加到当前卡片的某个字段（弹窗选字段，默认追加）。
+
+        content_format 决定怎么落字段：Markdown 要转义后存源码，富文本已经是 HTML
+        就直接写。混用的话，AI 回答里的 `<stdio.h>` 这类文本会被当标签吞掉。
+        """
+        try:
+            note_id = self.note_id_provider() if self.note_id_provider else None
+        except Exception:
+            note_id = None
+        if note_id is None:
+            tooltip("没有定位到当前卡片，请先在复习界面或浏览界面打开一张卡片")
+            return
+        apply_to_field(note_id, text, mode="append", content_format=content_format)
 
     def _on_load_finished(self, ok):
         if self.page is None:
